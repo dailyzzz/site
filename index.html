@@ -1143,6 +1143,12 @@
       border:1px solid rgba(91, 33, 182, .25);
     }
 
+    /* ===== Lazy-loaded cover art ===== */
+    /* Covers start as an empty placeholder and only fetch when the card
+       scrolls near the viewport; they fade in once the real image loads. */
+    .track-cover.lazy-cover { opacity:0; transition:opacity .35s ease; background:var(--panel-solid); }
+    .track-cover.lazy-cover.loaded { opacity:1; }
+
 </style>
 <script type="text/javascript">
     // Query parameter handling
@@ -1602,6 +1608,49 @@ function coverFor(track){
   return file ? mediaUrl(file) : mediaUrl('default-cover.png');
 }
 function coverFallback(img){ if(!img.dataset.fallback){ img.dataset.fallback='1'; img.src=mediaUrl('default-cover.png'); } }
+
+// ===== Lazy image loading (IntersectionObserver) =====
+// Cover images render with a tiny inline placeholder and the real URL in
+// data-src. They only start downloading when the card scrolls within
+// ~250px of the viewport, then fade in. Falls back to immediate loading
+// (with the browser's native loading="lazy") if IntersectionObserver is
+// unavailable.
+var LAZY_PLACEHOLDER = 'data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221%22%20height%3D%221%22%2F%3E';
+
+function loadLazyImage(img) {
+  var src = img.dataset.src;
+  if (!src || img.dataset.lazyLoaded === '1') return;
+  img.dataset.lazyLoaded = '1';
+  img.addEventListener('load', function () { img.classList.add('loaded'); }, { once: true });
+  // On error, coverFallback (wired via onerror) swaps in the default cover;
+  // still reveal the element so the fallback isn't stuck at opacity 0.
+  img.addEventListener('error', function () { img.classList.add('loaded'); }, { once: true });
+  img.src = src;
+}
+
+var coverObserver = ('IntersectionObserver' in window)
+  ? new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          loadLazyImage(entry.target);
+          coverObserver.unobserve(entry.target);
+        }
+      });
+    }, { rootMargin: '250px 0px', threshold: 0.01 })
+  : null;
+
+function observeLazyCovers(container) {
+  var imgs = container.querySelectorAll('img.lazy-cover[data-src]');
+  if (coverObserver) {
+    // The list is fully re-rendered on every filter/search/favorite change;
+    // disconnect drops references to the removed nodes before re-observing.
+    coverObserver.disconnect();
+    imgs.forEach(function (img) { coverObserver.observe(img); });
+  } else {
+    imgs.forEach(loadLazyImage);
+  }
+}
+
 function applyUiLanguage(){
   document.documentElement.lang = state.language === 'all' ? 'en' : state.language;
   document.querySelectorAll('[data-i18n]').forEach(function(el){ el.textContent=uiText(el.dataset.i18n); });
@@ -1797,7 +1846,7 @@ function renderTrackList() {
     div.setAttribute('aria-label', `${track.t}. ${LANG_NAMES[track.lang] || track.lang || ''}`);
     if (index === state.currentIndex) div.classList.add('playing');
     div.innerHTML = `
-      <img class="track-cover" loading="lazy" decoding="async" src="${coverFor(track)}" alt="Cover art for ${escapeHtml(track.t)}" onerror="coverFallback(this)">
+      <img class="track-cover lazy-cover" loading="lazy" decoding="async" src="${LAZY_PLACEHOLDER}" data-src="${coverFor(track)}" alt="Cover art for ${escapeHtml(track.t)}" onerror="coverFallback(this)">
       <div class="track-copy">
         <div class="track-meta"><span class="track-number">TRACK ${String(track.i).padStart(2,'0')}</span>${state.language === 'all' ? `<span class="track-lang-label">${LANG_NAMES[track.lang] || track.lang}</span>` : ''}</div>
         <div class="track-title">${escapeHtml(track.t)}</div>
@@ -1822,6 +1871,7 @@ function renderTrackList() {
     });
     container.appendChild(div);
   });
+  observeLazyCovers(container);
   updateOfflineIndicators();
 }
 function escapeHtml(value){ return String(value ?? '').replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
