@@ -1281,7 +1281,7 @@
 <button class="toolbar-btn" id="scrollToPlayer" type="button"><span>♪</span> <span class="label" data-i18n="nowPlaying">Now playing</span></button>
 </div>
 <div class="player" id="stickyPlayer">
-<img alt="Current track cover" class="player-art" id="playerCover" src="default-cover.png"/>
+<img alt="Current track cover" class="player-art" id="playerCover" src="https://tracks.zzzdaily.com/default-cover.png"/>
 <div class="player-main">
 <div class="track-info">
 <div id="trackTitle">Select a track to play</div>
@@ -1543,6 +1543,23 @@
 <audio crossorigin="anonymous" id="audioElement" preload="metadata"></audio>
 <script>
     window.sitename = '1234567890';
+
+// ===== Media CDN =====
+// The site is served from https://www.zzzdaily.com while all media
+// (audio tracks, cover art, lyrics, tracks.json) is served from the
+// dedicated media host below. mediaUrl() resolves any bare filename or
+// relative path against it, and passes absolute/blob URLs through untouched.
+var MEDIA_BASE = 'https://tracks.zzzdaily.com';
+
+function mediaUrl(path) {
+  if (!path) return '';
+  var p = String(path);
+  if (/^(https?:)?\/\//i.test(p) || p.indexOf('blob:') === 0 || p.indexOf('data:') === 0) {
+    return p; // already absolute
+  }
+  return MEDIA_BASE + '/' + p.replace(/^\/+/, '');
+}
+
 var FEATURED_ID = 21;
 var LANG_NAMES = {
   all: 'All Languages',
@@ -1577,13 +1594,14 @@ var UI_STRINGS = {
 };
 function uiText(key){ var lang=state && state.language !== 'all' ? state.language : 'en'; return (UI_STRINGS[lang]||UI_STRINGS.en)[key] || UI_STRINGS.en[key] || key; }
 function coverFor(track){
-  if (!track) return 'default-cover.png';
-  if (track.c) return track.c;
-  var lang=track.lang || state.language || 'en';
-  var file=(window.TRACKS[lang]&&window.TRACKS[lang][track.i]) || (window.TRACKS.en&&window.TRACKS.en[track.i]);
-  return file ? file : 'default-cover.png';
+  if (!track) return mediaUrl('default-cover.png');
+  if (track.c) return mediaUrl(track.c);
+  var lang = track.lang || state.language || 'en';
+  var entry = (window.TRACKS && (((window.TRACKS[lang]||[])[track.i]) || ((window.TRACKS.en||[])[track.i]))) || null;
+  var file = typeof entry === 'string' ? entry : (entry && entry.c);
+  return file ? mediaUrl(file) : mediaUrl('default-cover.png');
 }
-function coverFallback(img){ if(!img.dataset.fallback){ img.dataset.fallback='1'; img.src='default-cover.png'; } }
+function coverFallback(img){ if(!img.dataset.fallback){ img.dataset.fallback='1'; img.src=mediaUrl('default-cover.png'); } }
 function applyUiLanguage(){
   document.documentElement.lang = state.language === 'all' ? 'en' : state.language;
   document.querySelectorAll('[data-i18n]').forEach(function(el){ el.textContent=uiText(el.dataset.i18n); });
@@ -1610,7 +1628,7 @@ var state = {
 };
 
 // ===== Favorites (persisted to localStorage) =====
-var FAVORITES_KEY = 'unicorns_favorites';
+var FAVORITES_KEY = 'zzzdaily_favorites';
 
 function loadFavorites() {
   try {
@@ -1788,7 +1806,7 @@ function renderTrackList() {
           <span class="offline-badge" data-track="${track.f}" style="display:none">Offline</span>
           <button class="fav-btn-small${isFavorite(track) ? ' is-fav' : ''}" title="${isFavorite(track) ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${isFavorite(track) ? 'Remove' : 'Add'} ${escapeHtml(track.t)} ${isFavorite(track) ? 'from' : 'to'} favorites" aria-pressed="${isFavorite(track)}">${isFavorite(track) ? '♥' : '♡'}</button>
           <button class="play-btn-small" aria-label="Play ${escapeHtml(track.t)}">${index === state.currentIndex && state.isPlaying ? '⏸' : '▶'}</button>
-          <a href="${state.hostname === window.sitename ? `${track.d}/${track.f}` : `${track.f}`}" download="${track.f}" class="download-btn-small" title="Download" aria-label="Download ${escapeHtml(track.t)}" onclick="event.stopPropagation()">⇩</a>
+          <a href="${track.d ? `${String(track.d).replace(/\/+$/, '')}/${track.f}` : mediaUrl(track.f)}" download="${track.f}" class="download-btn-small" title="Download" aria-label="Download ${escapeHtml(track.t)}" onclick="event.stopPropagation()">⇩</a>
         </div>
       </div>`;
     div.addEventListener('click', e => {
@@ -1860,8 +1878,8 @@ function playTrack(index) {
     );
   }
 
-  // Relative path fallback.
-  sourceCandidates.push(track.f);
+  // Media-host fallback (audio lives on tracks.zzzdaily.com, not the site domain).
+  sourceCandidates.push(mediaUrl(track.f));
 
   // Remove duplicate candidates.
   sourceCandidates = Array.from(new Set(sourceCandidates));
@@ -1939,7 +1957,7 @@ function playTrack(index) {
   loadLyricsWithFallback(
     track,
     track.lang,
-    track.d ? [track.d] : []
+    track.d ? [track.d, MEDIA_BASE] : [MEDIA_BASE]
   );
 
   setTimeout(function () {
@@ -1952,7 +1970,7 @@ function updateTrackInfo() {
   var track = state.tracks[state.currentIndex];
   if (!track) {
     document.getElementById('trackTitle').textContent = uiText('select');
-    document.getElementById('playerCover').src = 'default-cover.png';
+    document.getElementById('playerCover').src = mediaUrl('default-cover.png');
     document.getElementById('trackLanguage').textContent = '';
     document.getElementById('trackBadges').innerHTML = '';
     return;
@@ -2002,10 +2020,10 @@ async function loadLyricsWithFallback(track, lang, fallbackCIDs) {
     }
   }
 
-  // All CID attempts failed, try relative path as final fallback
+  // All CID attempts failed, try the media host as final fallback
   try {
-    console.log('All CID attempts failed for lyrics, trying relative path...');
-    var resp = await fetch(`${filename}`);
+    console.log('All CID attempts failed for lyrics, trying media host...');
+    var resp = await fetch(mediaUrl(filename));
     if (resp.ok) {
       var text = await resp.text();
       lyricsText.innerHTML = `<pre>${text}</pre>`;
@@ -2023,8 +2041,8 @@ async function loadLyricsWithFallback(track, lang, fallbackCIDs) {
 async function loadLyrics(track, lang) {
   var fallbackCIDs = [
     track.d,
-    ''
-  ];
+    MEDIA_BASE
+  ].filter(Boolean);
   await loadLyricsWithFallback(track, lang, fallbackCIDs);
 }
 
@@ -2526,7 +2544,7 @@ document.getElementById('lyricsToggle').addEventListener('click', () => {
 // Share buttons
 document.getElementById('shareTwitter').addEventListener('click', () => {
   var url = encodeURIComponent(window.location.href);
-  var text = encodeURIComponent('Check out unicorns - A beautiful treasure');
+  var text = encodeURIComponent('Check out ZZZ Daily - WAKE UP SLEEPY HEAD');
   window.open(`https://twitter.com/intent/tweet?url=${url}&text=${text}`, '_blank');
 });
 
@@ -2537,7 +2555,7 @@ document.getElementById('shareFacebook').addEventListener('click', () => {
 
 document.getElementById('shareWhatsapp').addEventListener('click', () => {
   var url = encodeURIComponent(window.location.href);
-  var text = encodeURIComponent('Check out unicorns - A beautiful treasure');
+  var text = encodeURIComponent('Check out ZZZ Daily - WAKE UP SLEEPY HEAD');
   window.open(`https://wa.me/?text=${text}%20${url}`, '_blank');
 });
 
@@ -2571,7 +2589,7 @@ document.getElementById('clearCacheBtn')?.addEventListener('click', async () => 
 
 // State persistence
 function saveState() {
-  localStorage.setItem('unicorns_state', JSON.stringify({
+  localStorage.setItem('zzzdaily_state', JSON.stringify({
     language: state.language,
     currentIndex: state.currentIndex,
     shuffle: state.shuffle,
@@ -2586,7 +2604,7 @@ function saveState() {
 
 function loadState() {
   try {
-    var saved = localStorage.getItem('unicorns_state');
+    var saved = localStorage.getItem('zzzdaily_state');
     if (saved) {
       var data = JSON.parse(saved);
       state.language = data.language || 'en';
@@ -2704,8 +2722,10 @@ function preCacheNextTrack() {
 
   if (nextIndex >= 0 && nextIndex < state.tracks.length) {
     var nextTrack = state.tracks[nextIndex];
-    // Use full IPFS URL format, matching what playTrack uses
-    var url = `${nextTrack.d}/${nextTrack.f}`;
+    // Prefer the track's own CDN base; otherwise use the media host.
+    var url = nextTrack.d
+      ? `${String(nextTrack.d).replace(/\/+$/, '')}/${nextTrack.f}`
+      : mediaUrl(nextTrack.f);
 
     navigator.serviceWorker.controller.postMessage({
       action: 'preCacheTrack',
@@ -2734,12 +2754,12 @@ document.getElementById('cookieDecline').addEventListener('click', () => {
 
 (async function () {
   try {
-    var resp = await fetch(`tracks.json`);
+    var resp = await fetch(`${MEDIA_BASE}/tracks.json`);
     if (resp.ok) {
       window.TRACKS = await resp.json();
     }
   } catch (err) {
-    console.error(`Failed to load tracks.json`);
+    console.error(`Failed to load tracks.json from ${MEDIA_BASE}`);
   }
   // Initialize
   loadState();
